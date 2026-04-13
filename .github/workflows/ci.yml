@@ -1,0 +1,31 @@
+name: Flutter CI
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  flutter-ci:
+    name: Lint, Format and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Setup Flutter với tính năng Caching tự động cực mạnh
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true # Kích hoạt cache pub-cache giúp giảm thời gian build
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # Kiểm tra format code (rất nhạy cảm với dấu ; hoặc thụt lề sai)
+      - name: Check Formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      # Quét lỗi logic
+      - name: Analyze code
+        run: flutter analyze
