@@ -1,5 +1,6 @@
 name: Release CD
 
+# Workflow này sẽ chạy khi có push vào nhánh main
 on:
   push:
     branches: [ "main" ]
@@ -13,12 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Setup Flutter với tính năng Caching tự động giúp tăng tốc độ build
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
-
+      # Cài đặt dependencies trước khi build
       - name: Install dependencies
         run: flutter pub get
 

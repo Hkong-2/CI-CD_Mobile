@@ -1,23 +1,27 @@
 name: Flutter CI
 
+# Workflow này sẽ chạy khi có Pull Request vào nhánh main
 on:
   pull_request:
     branches: [ "main" ]
 
 jobs:
+
   flutter-ci:
     name: Lint, Format and Test
+    # Sử dụng môi trường Ubuntu mới nhất để chạy workflow
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout code từ repository để có thể làm việc với nó
       - uses: actions/checkout@v4
 
-      # Setup Flutter với tính năng Caching tự động cực mạnh
+      # Setup Flutter với tính năng Caching tự động 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          cache: true # Kích hoạt cache pub-cache giúp giảm thời gian build
+          cache: true # Kích hoạt cache pub-cache giúp giảm thời gian build 
 
       - name: Install Dependencies
         run: flutter pub get
