@@ -14,6 +14,8 @@ jobs:
   versioning:
     name: 🏷️ Semantic Versioning
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Cấp quyền cho Action này được phép tạo thẻ (tag) trên Repo của bạn
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }} # Lấy tên phiên bản vừa tạo ra (VD: v1.0.2) để truyền cho các Job bên dưới dùng chung
     steps:
