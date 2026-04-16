@@ -1,35 +1,98 @@
-name: Flutter CI
+name: Flutter Advanced CI
 
-# Workflow này sẽ chạy khi có Pull Request vào nhánh main
+# ---------------------------------------------------------
+# PHẦN 1: KHI NÀO THÌ WORKFLOW NÀY CHẠY? (TRIGGERS)
+# ---------------------------------------------------------
 on:
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ] # Chạy khi có ai đó tạo Pull Request đòi gộp code vào nhánh main hoặc develop
+  workflow_dispatch: # Cho phép xuất hiện một nút "Run workflow" trên Github để bạn bấm chạy bằng tay lúc demo live
 
+# ---------------------------------------------------------
+# PHẦN 2: CÁC CÔNG VIỆC CẦN LÀM (JOBS)
+# ---------------------------------------------------------
 jobs:
-
-  flutter-ci:
-    name: Lint, Format and Test
-    # Sử dụng môi trường Ubuntu mới nhất để chạy workflow
-    runs-on: ubuntu-latest
-
+  
+  # JOB 1: KIỂM TRA CHẤT LƯỢNG CODE (Không cần build app, chỉ quét lỗi)
+  code-quality:
+    name: 🔍 Code Quality & Static Analysis
+    runs-on: ubuntu-latest # Thuê một máy chủ ảo chạy hệ điều hành Ubuntu mới nhất của Github
     steps:
-      # Checkout code từ repository để có thể làm việc với nó
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # Bước 1: Kéo (clone) code từ repository của bạn về máy chủ ảo này
+      
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2 # Bước 2: Cài đặt môi trường Flutter lên máy chủ ảo
+        with:
+          channel: 'stable'
+          cache: true # Bật tính năng nhớ tạm (cache) để các lần chạy sau không phải tải lại Flutter từ đầu
+          
+      - name: Install Dependencies
+        run: flutter pub get # Bước 3: Tải các thư viện (packages) mà app cần
+        
+      - name: Check Formatting
+        run: dart format --output=none --set-exit-if-changed . # Bước 4: Kiểm tra xem code có được thụt lề, xuống dòng chuẩn hay chưa
+        
+      - name: Analyze code
+        # Bước 5: Quét sâu vào code xem có biến nào rác không dùng, hàm nào sai kiểu dữ liệu không (bắt lỗi nghiêm ngặt)
+        run: flutter analyze --fatal-infos --fatal-warnings
 
-      # Setup Flutter với tính năng Caching tự động 
+  # JOB 2: CHẠY TEST (Chỉ chạy khi Job 1 thành công)
+  test:
+    name: 🧪 Unit Tests & Coverage
+    needs: code-quality # QUAN TRỌNG: Lệnh này bảo Github là "Ê, chờ job 'code-quality' chạy xong và Xanh (Pass) thì mới được chạy cái này nhé"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          cache: true # Kích hoạt cache pub-cache giúp giảm thời gian build 
-
+          cache: true
       - name: Install Dependencies
         run: flutter pub get
+        
+      - name: Run Tests with Coverage
+        run: flutter test --coverage # Chạy các file unit test và đo lường xem code đã được test bao nhiêu phần trăm (coverage)
+        
+      - name: Upload Coverage Artifact
+        uses: actions/upload-artifact@v4 # Đóng gói kết quả test thành một file (Artifact) để bạn có thể tải về xem sau khi quy trình kết thúc
+        with:
+          name: coverage-report
+          path: coverage/lcov.info
 
-      # Kiểm tra format code (rất nhạy cảm với dấu ; hoặc thụt lề sai)
-      - name: Check Formatting
-        run: dart format --output=none --set-exit-if-changed .
-
-      # Quét lỗi logic
-      - name: Analyze code
-        run: flutter analyze
+  # JOB 3: BUILD THỬ (Chỉ chạy khi Job 1 thành công)
+  build-dry-run:
+    name: 🛠️ Dry Run Build (Android)
+    needs: code-quality # Cũng chờ Job 1 xong mới chạy. Nghĩa là Job 2 và Job 3 sẽ chạy SONG SONG cùng lúc với nhau.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Java
+        uses: actions/setup-java@v3 # Build Android thì cần có Java
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          
+      - name: Cache Gradle packages
+        uses: actions/cache@v3 # QUAN TRỌNG: Lưu lại bộ nhớ đệm của Gradle. Gradle tải thư viện rất lâu, lưu lại sẽ giúp các lần sau build nhanh như chớp.
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+            
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+          
+      - name: Install Dependencies
+        run: flutter pub get
+        
+      - name: Build Debug APK
+        # Thử build app ra file APK chế độ debug. Nếu build lỗi (code xung đột) thì Github sẽ báo Đỏ để chặn không cho gộp nhánh (merge).
+        run: flutter build apk --debug

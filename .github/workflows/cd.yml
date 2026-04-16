@@ -1,54 +1,118 @@
-name: Release CD
+name: Flutter Advanced CD
 
-# Workflow này sẽ chạy khi có push vào nhánh main
+# ---------------------------------------------------------
+# KHI NÀO CHẠY?
+# ---------------------------------------------------------
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" ] # Chỉ chạy khi có code MỚI được đẩy thẳng (push) hoặc gộp (merge) vào nhánh main (nhánh sản phẩm chính thức)
+  workflow_dispatch: # Cho phép bấm chạy bằng tay
 
 jobs:
-  build-and-release:
-    name: Build APK & Create Release
+  
+  # JOB 1: ĐÁNH DẤU PHIÊN BẢN (Ví dụ: v1.0.0 lên v1.0.1)
+  versioning:
+    name: 🏷️ Semantic Versioning
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }} # Lấy tên phiên bản vừa tạo ra (VD: v1.0.2) để truyền cho các Job bên dưới dùng chung
     steps:
       - uses: actions/checkout@v4
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2 # Tool tự động phân tích code và tăng số phiên bản app lên 1 bậc
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch 
 
-      # Setup Flutter với tính năng Caching tự động giúp tăng tốc độ build
+  # JOB 2: XÂY DỰNG FILE CÀI ĐẶT
+  build-artifacts:
+    name: 📦 Build Release Artifacts
+    needs: versioning # Phải đợi đánh xong tên phiên bản mới được build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          
+      - name: Cache Gradle
+        uses: actions/cache@v3 # Tái sử dụng Cache giống bên CI để build nhanh hơn
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
-      # Cài đặt dependencies trước khi build
       - name: Install dependencies
         run: flutter pub get
-
-      # Giải mã Keystore từ Secret
+        
       - name: Decode Keystore
+        # Giải mã file chữ ký điện tử (Keystore). Để public app lên CH Play, app phải được "ký tên". 
+        # File ký được giấu trong Github Secrets để bảo mật, bây giờ mới lấy ra giải mã.
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
-
-      # Build APK với các biến môi trường
+          
       - name: Build APK
+        # Build ra file .apk để cài trực tiếp bằng tay lên điện thoại
         run: flutter build apk --release
         env:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-
-      # Tự động tạo Tag version (VD: v1.0.1)
-      - name: Bump version and push tag
-        id: tag_version
-        uses: mathieudutour/github-tag-action@v6.2
+          
+      - name: Build App Bundle (AAB)
+        # Build ra file .aab - Đây là định dạng bắt buộc nếu muốn đăng app lên Google Play Store
+        run: flutter build appbundle --release
+        env:
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          
+      # Sau khi build xong thì app nằm trên máy chủ ảo. Ta phải "upload" nó lên không gian chung (Artifacts) để Job sau có thể lấy.
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          name: app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          
+      - name: Upload AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
 
-      # Tạo Release và đính kèm APK
+  # JOB 3: TẠO GÓI PHÁT HÀNH TRÊN GITHUB (RELEASE)
+  release:
+    name: 🚀 Create GitHub Release
+    needs: [versioning, build-artifacts] # Job này đợi CẢ 2 job trên chạy xong hết mới bắt đầu
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Cấp quyền cho Action này được phép tạo ghi chú phát hành trên Repo của bạn
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4 # Tải file APK từ không gian chung (do Job 2 đẩy lên) về lại máy chủ ảo này
+        with:
+          name: app-release-apk
+          
+      - name: Download AAB
+        uses: actions/download-artifact@v4 # Tải file AAB về
+        with:
+          name: app-release-aab
+          
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2 # Tool tự động tạo mục "Releases" bên góc phải của trang Github
         with:
-          tag_name: ${{ steps.tag_version.outputs.new_tag }}
-          name: Release ${{ steps.tag_version.outputs.new_tag }}
-          generate_release_notes: true
-          files: build/app/outputs/flutter-apk/app-release.apk
+          tag_name: ${{ needs.versioning.outputs.new_tag }} # Tự lấy đúng cái tên phiên bản (VD v1.0.2) từ Job 1
+          name: Release ${{ needs.versioning.outputs.new_tag }}
+          generate_release_notes: true # Tự động viết tóm tắt xem phiên bản này có code gì mới
+          files: | # Đính kèm 2 file này vào mục Release cho người dùng tải về
+            app-release.apk
+            app-release.aab
